@@ -57,10 +57,13 @@ class RateLimitedClient:
         url: str,
         params: dict | None = None,
         data: dict | None = None,
+        json: dict | None = None,
         allow_redirects: bool = False,
     ) -> requests.Response | None:
         """Send one request after waiting for a rate-limit slot.
 
+        `data` sends a form-encoded body; `json` sends a JSON body (used for
+        APIs such as Juice Shop's login, which only accept application/json).
         Returns None on network errors instead of raising, so a single dead
         link never crashes a whole scan. Redirects are NOT followed by
         default: callers decide, because following a redirect blindly could
@@ -81,6 +84,7 @@ class RateLimitedClient:
                 url,
                 params=params,
                 data=data,
+                json=json,
                 timeout=self.config.timeout,
                 allow_redirects=allow_redirects,
                 stream=True,  # don't download the body until we decide how much to read

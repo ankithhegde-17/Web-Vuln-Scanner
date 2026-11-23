@@ -36,6 +36,13 @@
 # Product search — error-based SQL injection on 'q'. (HIGH, confirmed)
 http://localhost:3000/rest/products/search?q=apple
 
+# Login — SQL injection on the 'email' field. This is a JSON API (it only
+# accepts application/json), so it's seeded as a POST with a JSON body: the
+# scanner injects into each string field. A breaking quote makes Juice Shop
+# leak a Sequelize/SQLite stack trace, which the error-based check detects.
+# (HIGH, confirmed) The placeholder email/password values are benign.
+POST http://localhost:3000/rest/user/login {"email": "test@example.com", "password": "test"}
+
 # Product reviews — a numeric 'id' parameter, useful for exercising the
 # error-based and boolean SQLi probes on a second endpoint.
 http://localhost:3000/rest/products/1/reviews?id=1

@@ -49,6 +49,13 @@ _RAW_SIGNATURES = {
     "MSSQL": r"Microsoft SQL Server|ODBC SQL Server Driver|Unclosed quotation mark after the character string|SQLServerException",
     "Oracle": r"ORA-[0-9]{5}|Oracle error|quoted string not properly terminated",
     "Generic": r"SQL syntax.*error|syntax error at or near|Warning.*\Wmysqli?_|Dynamic SQL Error",
+    # ORM / driver stack traces. Some apps swallow the raw DB message but still
+    # leak a stack trace that names the database driver when a query blows up
+    # (e.g. Juice Shop's login returns a Sequelize/SQLite stack trace, not a
+    # clean "SQLITE_ERROR" string). A driver frame appearing ONLY after an
+    # injected quote is strong evidence the input reached the SQL layer.
+    "ORM/driver stack trace": r"sequelize/lib/dialects/\w+/query\.js|SequelizeDatabaseError|"
+                              r"knex/lib/|/mysql2?/lib/|/pg/lib/|org\.hibernate\.|at Sequelize",
 }
 SIGNATURES = {engine: re.compile(pattern, re.IGNORECASE) for engine, pattern in _RAW_SIGNATURES.items()}
 
@@ -117,7 +124,7 @@ class SQLInjectionCheck(ActiveCheck):
                 title=f"SQL injection (error-based) via {point.param}",
                 url=resp.url,
                 description=(
-                    f"Sending a quote in '{point.param}' produced a {engine} database error in the response, "
+                    f"Sending a quote in '{point.param}' produced a database error ({engine}) in the response, "
                     "which means the input is being placed into a SQL query unsafely. This can allow reading "
                     "or altering database contents."
                 ),

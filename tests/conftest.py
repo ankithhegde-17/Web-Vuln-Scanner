@@ -12,6 +12,7 @@ It lets us test the scanner end-to-end without touching any real site:
 from __future__ import annotations
 
 import html
+import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
@@ -118,10 +119,25 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         Handler.requests_seen.append(("POST", self.path))
-        # Reflects the 'comment' field unencoded -> reflected XSS via POST form.
         length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(length).decode() if length else ""
-        comment = parse_qs(body).get("comment", [""])[0]
+        raw = self.rfile.read(length).decode() if length else ""
+
+        # A JSON login API that leaks only a driver stack trace (no clean
+        # "SQLITE_ERROR" string) when a quote breaks the query -- mimics Juice
+        # Shop's /rest/user/login, to test JSON-body injection + the ORM
+        # stack-trace signature.
+        if self.path == "/rest/user/login":
+            try:
+                email = json.loads(raw).get("email", "") if raw else ""
+            except json.JSONDecodeError:
+                email = ""
+            if "'" in email or '"' in email:
+                return self._send(500, b"<html><body>Error at "
+                                        b"sequelize/lib/dialects/sqlite/query.js:185:27</body></html>")
+            return self._send(401, b"Invalid email or password.", "text/plain")
+
+        # Reflects the 'comment' field unencoded -> reflected XSS via POST form.
+        comment = parse_qs(raw).get("comment", [""])[0]
         self._send(200, f"<html><body>You said: {comment}</body></html>".encode())
 
 

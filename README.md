@@ -199,13 +199,17 @@ Why it matters: a version string lets an attacker go straight to a CVE database 
 Active checks only run with **both** `--i-have-permission` and `--active`. They test *injection points* — a query-string parameter or a form field — discovered two ways:
 
 * **Crawler forms.** Every form the crawler found, one injection point per field.
-* **`--urls` seeds.** On JavaScript apps the crawler sees one page, so you hand it known endpoints. Each query parameter in a seeded URL becomes an injection point. Seeds and forms are both **scope-checked**: anything not on the authorized host/port is dropped.
+* **`--urls` seeds.** On JavaScript apps the crawler sees one page, so you hand it known endpoints. A seed is one of:
+  * `http://host/search?q=test` — a URL; each **query parameter** becomes an injection point.
+  * `POST http://host/rest/user/login {"email": "a@b.c", "password": "x"}` — a method, a URL and a **JSON body**; each **string field** becomes an injection point. This is how the scanner reaches JSON APIs (like a login endpoint) that don't accept form or query input. The placeholder values are benign; the scanner swaps each in turn for its payloads.
+
+  Seeds and forms are both **scope-checked**: anything not on the authorized host/port is dropped.
 
 Every injection point is tested by swapping the payload into just that one parameter, keeping the others at their baseline values, and every active finding records the exact `payload` and the `evidence`.
 
 ### 1. Reflected XSS (`active/xss.py`)
 
-Injects a unique, harmless marker containing the characters that matter for XSS — `< > " '` — e.g. `xssa1b2c3d4e5<>"'`. Then:
+**Scope: this check detects *reflected* (server-side) XSS only** — where the server copies your input straight into the HTML it returns. Injects a unique, harmless marker containing the characters that matter for XSS — `< > " '` — e.g. `xssa1b2c3d4e5<>"'`. Then:
 
 * If that exact string comes back **unencoded** in an **HTML** response, the app copied input into the page without escaping it — a real reflected-XSS sink. **Reported HIGH.**
 * If it comes back **HTML-encoded** (`&lt;...&gt;`), the app is escaping correctly — **not reported.** This is the key to avoiding false positives: lots of sites reflect your input, but safely.
@@ -213,11 +217,13 @@ Injects a unique, harmless marker containing the characters that matter for XSS 
 
 The payload carries no script, tag name or event handler a browser would act on — the unencoded reflection alone proves the flaw, so the probe stays benign.
 
+> **DOM-based XSS is out of scope.** When the payload never appears in the server's HTML but is instead written into the page by client-side JavaScript (as in Juice Shop's Angular search bar), only a browser that runs the JavaScript can see it. An HTTP-level scanner like this one cannot. Catching DOM XSS would need a JavaScript rendering engine — **planned as future work using a headless browser such as [Playwright](https://playwright.dev/python/)**, which would also solve single-page-app crawling (see Known limitations).
+
 ### 2. SQL injection — safe detection only (`active/sqli.py`)
 
 Two techniques, neither of which writes data:
 
-* **Error-based.** Send an unbalanced quote (`'"`). If the input is concatenated into SQL, the database throws a syntax error that often leaks into the response. Matched against known error signatures for MySQL, PostgreSQL, SQLite, MS SQL Server and Oracle — but only if the signature wasn't already on the clean baseline page. **Confirmed, HIGH.**
+* **Error-based.** Send an unbalanced quote (`'"`). If the input is concatenated into SQL, the database throws an error that often leaks into the response. Matched against known error signatures for MySQL, PostgreSQL, SQLite, MS SQL Server and Oracle — **and** against ORM/driver **stack traces** (e.g. a `sequelize/.../sqlite/query.js` frame), because some apps swallow the raw DB message but still leak a stack trace naming the driver. In every case the signature must be *newly introduced* by the payload (not already on the clean baseline page). **Confirmed, HIGH.**
 * **Boolean-based (behavioural).** Send a true condition (`' AND '1'='1`) and a false one (`' AND '1'='2`). If the input reaches a `WHERE` clause, the true response matches the normal page while the false one differs. A consistent difference is reported **HIGH but `tentative`** (behavioural, so confirm by hand).
 
 Deliberately **not** done, because the brief forbids destructive/noisy payloads and they can harm a target: no `DROP`/`DELETE`/`UPDATE`/`INSERT`, no stacked queries (`; DROP ...`), and no time-based `SLEEP()` payloads (those deliberately load the DB). Detection only.
@@ -278,11 +284,12 @@ python -m scanner http://localhost:3000 --i-have-permission --active --urls targ
 | Endpoint | Check | Result |
 |---|---|---|
 | `/rest/products/search?q=` | SQL injection (error-based) | **HIGH, confirmed.** The `'"` payload produces `SQLITE_ERROR: ... syntax error` in the response — Juice Shop builds the search query by string concatenation. This is its signature SQLi. |
+| `POST /rest/user/login` (`email`) | SQL injection (error-based) | **HIGH, confirmed.** Seeded as a JSON POST. The quote in `email` makes Juice Shop leak a `sequelize/.../sqlite/query.js` stack trace — the same `email` field is injectable to the known `' OR 1=1--` auth bypass. |
 | `/` and crawled pages | passive checks | missing **CSP**, missing **Referrer-Policy**, `/ftp` in **robots.txt**, plain HTTP (INFO on localhost) |
 
 **What correctly does *not* fire, and why** (these matter as much — they show the scanner avoids false positives):
 
-* **Reflected XSS on search** — the search endpoint returns `application/json`, and Juice Shop's XSS challenges are **DOM-based** (the payload is rendered client-side by Angular, never reflected into server HTML). An HTTP-level scanner can't see DOM XSS. To watch the XSS check fire against a genuine server-side reflection, run the tests (`tests/test_active.py`) or point `--urls` at an app that echoes input into its HTML unencoded.
+* **Reflected XSS on search** — the search endpoint returns `application/json`, and Juice Shop's XSS challenges are **DOM-based** (the payload is rendered client-side by Angular, never reflected into server HTML). An HTTP-level scanner can't see DOM XSS; that needs a headless browser (planned — see the XSS check's note and Known limitations). To watch the XSS check fire against a genuine server-side reflection, run the tests (`tests/test_active.py`) or point `--urls` at an app that echoes input into its HTML unencoded.
 * **Open redirect on `/redirect`** — Juice Shop allow-lists the redirect target, so the harmless marker host is rejected. The check is proven against the test server in `tests/test_active.py`.
 
 ### Known limitations

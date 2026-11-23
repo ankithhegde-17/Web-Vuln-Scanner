@@ -17,7 +17,12 @@ from scanner.cli import main
 from scanner.config import ScanConfig
 from scanner.core import run_scan
 from scanner.http_client import RateLimitedClient
-from scanner.targets import build_injection_points, parse_seed_urls, points_from_seed_url
+from scanner.targets import (
+    build_injection_points,
+    parse_seed_urls,
+    points_from_seed_line,
+    points_from_seed_url,
+)
 from tests.test_scanner import FakeStdin
 
 
@@ -63,6 +68,24 @@ def test_points_from_seed_url_one_per_param():
     assert all(p.params == {"q": "a", "page": "2"} for p in pts)  # others kept at baseline
 
 
+def test_seed_line_json_post():
+    pts = points_from_seed_line('POST http://h/login {"email": "a@b.c", "password": "x"}')
+    assert {p.param for p in pts} == {"email", "password"}
+    assert all(p.body_type == "json" and p.method == "POST" and p.url == "http://h/login" for p in pts)
+    # Baseline preserved; injecting into one field leaves the other intact.
+    email_pt = next(p for p in pts if p.param == "email")
+    assert email_pt.with_payload("PAYLOAD") == {"email": "PAYLOAD", "password": "x"}
+
+
+def test_seed_line_bad_json_is_skipped():
+    assert points_from_seed_line('POST http://h/login {not valid json}') == []
+
+
+def test_seed_line_bare_url_is_get():
+    pts = points_from_seed_line("http://h/s?q=a")
+    assert pts and pts[0].body_type == "query" and pts[0].method == "GET"
+
+
 # ----------------------------------------------------------------- XSS check
 def test_xss_detects_unencoded_reflection(test_site):
     url, _ = test_site
@@ -82,7 +105,7 @@ def test_xss_ignores_encoded_reflection(test_site):
 def test_xss_via_post_form(test_site):
     url, _ = test_site
     point = InjectionPoint(method="POST", url=f"{url}/comment", params={"comment": "hi"}, param="comment",
-                           source="post form")
+                           body_type="form", source="post form")
     findings = ReflectedXSSCheck().check_point(point, client_for(url))
     assert len(findings) == 1 and findings[0].rule_id == "ACTIVE_REFLECTED_XSS"
 
@@ -95,6 +118,19 @@ def test_sqli_error_based(test_site):
     assert findings[0].rule_id == "ACTIVE_SQLI_ERROR"
     assert "SQLite" in findings[0].evidence
     assert findings[0].confidence == "confirmed"
+
+
+def test_sqli_json_login_via_stack_trace(test_site):
+    url, _ = test_site
+    # JSON POST injection + the ORM/driver stack-trace signature: the login
+    # endpoint leaks only a Sequelize/SQLite stack trace, no "SQLITE_ERROR".
+    point = InjectionPoint(method="POST", url=f"{url}/rest/user/login",
+                           params={"email": "a@b.c", "password": "x"}, param="email", body_type="json",
+                           source="json login")
+    findings = SQLInjectionCheck().check_point(point, client_for(url))
+    assert len(findings) == 1
+    assert findings[0].rule_id == "ACTIVE_SQLI_ERROR"
+    assert "stack trace" in findings[0].evidence.lower()
 
 
 def test_sqli_clean_param_not_flagged(test_site):

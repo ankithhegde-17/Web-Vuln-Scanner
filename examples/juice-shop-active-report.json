@@ -6,8 +6,8 @@
     "mode": "active+passive"
   },
   "target": "http://localhost:3000",
-  "started_at": "2026-11-23T07:27:05+00:00",
-  "finished_at": "2026-11-23T07:27:09+00:00",
+  "started_at": "2026-11-23T08:16:31+00:00",
+  "finished_at": "2026-11-23T08:16:38+00:00",
   "settings": {
     "max_pages": 50,
     "max_depth": 3,
@@ -17,6 +17,7 @@
     "active_checks": true,
     "seed_urls": [
       "http://localhost:3000/rest/products/search?q=apple",
+      "POST http://localhost:3000/rest/user/login {\"email\": \"test@example.com\", \"password\": \"test\"}",
       "http://localhost:3000/rest/products/1/reviews?id=1",
       "http://localhost:3000/redirect?to=https://github.com/juice-shop/juice-shop"
     ]
@@ -24,10 +25,10 @@
   "stats": {
     "pages_crawled": 1,
     "forms_found": 0,
-    "injection_points_tested": 3,
-    "requests_made": 22,
+    "injection_points_tested": 5,
+    "requests_made": 32,
     "findings_by_severity": {
-      "high": 1,
+      "high": 2,
       "medium": 1,
       "low": 1,
       "info": 2
@@ -41,7 +42,7 @@
       "severity": "high",
       "title": "SQL injection (error-based) via q",
       "url": "http://localhost:3000/rest/products/search?q=%27%22",
-      "description": "Sending a quote in 'q' produced a SQLite database error in the response, which means the input is being placed into a SQL query unsafely. This can allow reading or altering database contents.",
+      "description": "Sending a quote in 'q' produced a database error (SQLite) in the response, which means the input is being placed into a SQL query unsafely. This can allow reading or altering database contents.",
       "remediation": "Use parameterised queries / prepared statements (never build SQL by string concatenation), and don't return raw database errors to the client.",
       "evidence": "SQLite error signature in response: SQLITE_ERROR",
       "confidence": "confirmed",
@@ -50,6 +51,22 @@
         "http://localhost:3000/rest/products/search?q=%27%22"
       ],
       "id": "ACTIVE_SQLI_ERROR-ef25eb47"
+    },
+    {
+      "rule_id": "ACTIVE_SQLI_ERROR",
+      "check": "sql_injection",
+      "severity": "high",
+      "title": "SQL injection (error-based) via email",
+      "url": "http://localhost:3000/rest/user/login",
+      "description": "Sending a quote in 'email' produced a database error (ORM/driver stack trace) in the response, which means the input is being placed into a SQL query unsafely. This can allow reading or altering database contents.",
+      "remediation": "Use parameterised queries / prepared statements (never build SQL by string concatenation), and don't return raw database errors to the client.",
+      "evidence": "ORM/driver stack trace error signature in response: sequelize/lib/dialects/sqlite/query.js",
+      "confidence": "confirmed",
+      "payload": "'\"",
+      "affected_urls": [
+        "http://localhost:3000/rest/user/login"
+      ],
+      "id": "ACTIVE_SQLI_ERROR-f9f42734"
     },
     {
       "rule_id": "HEADER_CSP_MISSING",
