@@ -5,12 +5,14 @@ A command-line web vulnerability scanner written in Python, built in phases as a
 - **Passive mode (default):** a same-domain crawler plus non-intrusive checks. Sends no attack payloads, never submits forms, only `GET`.
 - **Active mode (opt-in, `--active`):** adds reflected-XSS, safe SQL-injection, and open-redirect detection. All non-destructive detection probes — nothing that deletes, modifies, or submits real data. Gated behind **both** `--i-have-permission` and `--active`.
 - **LLM triage (opt-in, `--triage`):** sends the findings to a configurable LLM that re-ranks them by real-world severity, flags false positives and duplicates, and writes plain-language fixes. Needs an API key; skips gracefully without one.
+- **HTML dashboard (opt-in, `--html` or `python -m scanner.report`):** turns a JSON report into one self-contained, offline HTML page with severity-coloured finding cards and a severity filter.
 
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Crawler, form inventory, passive checks, JSON + terminal reports | ✅ done |
 | 2 | Active checks (reflected XSS, safe SQLi detection, open redirect) + seeded targets | ✅ done |
 | 3 | LLM triage layer that enriches the JSON findings | ✅ done |
+| 4 | Self-contained HTML results dashboard | ✅ done |
 
 ---
 
@@ -90,6 +92,7 @@ python -m scanner https://my-app.example.com --i-have-permission --delay 2 --max
 | `--timeout SECONDS` | `10` | Per-request timeout |
 | `-o, --output PATH` | `scan-results.json` | Where to write the JSON report |
 | `--no-path-probes` | off | Skip the `/.git/`, `/.env`, ... probes |
+| `--html` | off | Also write a self-contained HTML dashboard (`<output>.html`); uses the triaged results when `--triage` ran |
 | `--ignore-robots` | off | Ignore robots.txt (only for apps you own) |
 | `--insecure` | off | Skip TLS verification (your own self-signed apps) |
 | `-v, --verbose` | off | Log each request |
@@ -136,9 +139,11 @@ Web-Vuln-Scanner/
 │   │   ├── report.py        enriched JSON + Markdown writers
 │   │   ├── runner.py        shared driver (used by --triage and the CLI below)
 │   │   └── __main__.py      `python -m scanner.triage <report.json>`
+│   ├── report.py            `python -m scanner.report <report.json>` (Phase 4)
 │   └── reporting/
 │       ├── json_report.py   machine-readable report
-│       └── terminal.py      human-readable summary
+│       ├── terminal.py      human-readable summary
+│       └── html_report.py   self-contained HTML dashboard (Phase 4)
 ├── targets/juice-shop.txt   seed endpoints for testing the active checks
 ├── requirements-triage.txt  optional deps for triage only (anthropic SDK)
 ├── .env.example             template for the triage API key (.env is gitignored)
@@ -293,6 +298,32 @@ Triage necessarily sends the findings — including target URLs and evidence sni
 ### Adding another provider
 
 Providers sit behind a one-method interface (`LLMProvider.complete(system, user) -> str`) in `scanner/triage/providers.py`. Claude (Anthropic SDK), OpenAI and Gemini (Google Gen AI SDK) are included; a new provider is a small subclass plus one line in the registry — the engine, prompt and reports don't change.
+
+---
+
+## HTML dashboard (Phase 4, opt-in)
+
+Turns a scan's JSON into a single `report.html` you can open in any browser. All CSS and JavaScript are inline and the page makes **no network requests**, so it works offline and can be attached or archived as one file. It only reads a JSON file; it never contacts the target or an LLM.
+
+```bash
+# From a saved report (plain or triaged) -> writes scan-results.html next to it
+python -m scanner.report scan-results.json
+python -m scanner.report scan-results.triaged.json -o report.html
+
+# Or as part of a scan (uses the triaged results when --triage ran)
+python -m scanner http://localhost:3000 --i-have-permission --active \
+    --urls targets/juice-shop.txt --triage --html
+```
+
+What's on the page:
+
+- **Header:** target URL, scan time and duration, mode (passive / active + passive), pages crawled and requests made, plus the LLM's summary when the report was triaged.
+- **Severity tiles:** counts for critical, high, medium, low and info, with a stacked bar showing the mix. **Clicking a tile shows or hides that severity**, and "Show all" resets the filter. The browser remembers your filter for that file.
+- **Finding cards**, sorted critical → info, with triage-flagged false positives and duplicates dimmed at the end. Each card has a severity-coloured edge and badge. If triage changed the severity, the scanner's original appears struck through next to it. Cards show the URL, payload, evidence, and the triage reason, explanation and example fix. Long evidence collapses.
+- **No triage data?** Cards use the scanner's severity and show its own description and remediation instead. A report with no findings shows a clean empty state.
+- Light and dark mode follow your system setting; on phones the cards stack and long URLs wrap.
+
+**Escaping:** payloads, evidence, URLs and the LLM's text all come from outside, and some are literally XSS probes. Every value is HTML-escaped before it goes into the page, and the page's script only shows/hides cards and never builds HTML from report data, so a hostile payload is displayed as text and never runs. A test feeds `<script>` payloads through every field to check this.
 
 ---
 

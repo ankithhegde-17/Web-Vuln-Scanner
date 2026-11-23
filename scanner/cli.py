@@ -75,6 +75,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="LLM provider for --triage (default: anthropic; also: openai, gemini)")
     triage.add_argument("--llm-model", default=None,
                         help="Model id for --triage (default: the provider's default, e.g. claude-sonnet-5-5)")
+    p.add_argument("--html", action="store_true",
+                   help="Also write a self-contained HTML dashboard next to the JSON report (<output>.html). "
+                        "With --triage, the dashboard uses the triaged results when triage ran.")
     p.add_argument("--ignore-robots", action="store_true",
                    help="Ignore robots.txt. Only appropriate for apps you own.")
     p.add_argument("--insecure", action="store_true",
@@ -193,12 +196,23 @@ def main(argv: list[str] | None = None) -> int:
 
     # Phase 3 (opt-in): LLM triage of the findings. Imported lazily so a plain
     # scan never loads the triage code or its optional dependencies.
+    triaged = False
     if args.triage:
         from scanner.reporting.json_report import build_report
         from scanner.triage.runner import run_triage
-        run_triage(
+        triaged = run_triage(
             build_report(result), args.output,
             provider_name=args.llm_provider, model=args.llm_model,
         )
+
+    # Phase 4 (opt-in): HTML dashboard, rendered from the JSON just written so
+    # it shows exactly what's on disk. Prefer the triaged JSON when it exists.
+    if args.html:
+        from pathlib import Path
+        from scanner.reporting.html_report import write_html_from_json
+        stem = Path(args.output).with_suffix("")
+        source = Path(f"{stem}.triaged.json") if triaged else Path(args.output)
+        html_path = write_html_from_json(source, f"{stem}.html")
+        print(f"HTML report written to: {html_path}", file=sys.stderr)
 
     return EXIT_OK
