@@ -266,6 +266,7 @@ python -m scanner.triage scan-results.json
 # Pick a model or provider
 python -m scanner.triage scan-results.json --llm-model claude-opus-5-5
 python -m scanner.triage scan-results.json --llm-provider openai --llm-model gpt-4o
+python -m scanner.triage scan-results.json --llm-provider gemini
 ```
 
 Either way it writes `<report>.triaged.json` (the original findings plus a `triage` block on each, re-sorted by adjusted severity with flagged items at the end) and `<report>.triaged.md` (a readable summary).
@@ -281,8 +282,9 @@ cp .env.example .env     # then edit .env and add your key
 
 - `--llm-provider anthropic` (default) reads `ANTHROPIC_API_KEY`; default model `claude-sonnet-5-5`.
 - `--llm-provider openai` reads `OPENAI_API_KEY`.
+- `--llm-provider gemini` reads `GEMINI_API_KEY`; default model `gemini-3.8-flash` (needs `pip install google-genai`; get a key at https://aistudio.google.com/apikey).
 
-**No key set → triage skips gracefully:** it prints how to set one and exits cleanly (exit 0), the scan report is untouched, and **nothing is sent anywhere.** A malformed model reply is also handled: triage retries once, then returns the report unchanged with a note, rather than crashing or dropping findings.
+**No key set → triage skips gracefully:** it prints how to set one and exits cleanly (exit 0), the scan report is untouched, and **nothing is sent anywhere.** A malformed model reply is also handled: triage retries once, then returns the report unchanged with a note, rather than crashing or dropping findings. Provider-side failures (rejected key, quota, a temporarily overloaded model, network errors) are reported in one line and the scan report is kept — never a traceback.
 
 ### Privacy note
 
@@ -290,7 +292,7 @@ Triage necessarily sends the findings — including target URLs and evidence sni
 
 ### Adding another provider
 
-Providers sit behind a one-method interface (`LLMProvider.complete(system, user) -> str`) in `scanner/triage/providers.py`. Claude (Anthropic SDK) and OpenAI are included; a new provider is a small subclass plus one line in the registry — the engine, prompt and reports don't change.
+Providers sit behind a one-method interface (`LLMProvider.complete(system, user) -> str`) in `scanner/triage/providers.py`. Claude (Anthropic SDK), OpenAI and Gemini (Google Gen AI SDK) are included; a new provider is a small subclass plus one line in the registry — the engine, prompt and reports don't change.
 
 ---
 

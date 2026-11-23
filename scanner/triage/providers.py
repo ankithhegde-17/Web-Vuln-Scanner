@@ -128,9 +128,41 @@ class OpenAIProvider(LLMProvider):
         return resp.choices[0].message.content or ""
 
 
+class GeminiProvider(LLMProvider):
+    name = "gemini"
+    api_key_env = "GEMINI_API_KEY"
+    # gemini-3.8-flash is the current stable Flash model (fast + cheap, which
+    # suits a classification-style triage task). Override with --llm-model.
+    default_model = "gemini-3.8-flash"
+
+    def complete(self, system: str, user: str) -> str:
+        try:
+            from google import genai
+            from google.genai import types
+        except ImportError as exc:  # pragma: no cover - exercised only without the SDK
+            raise TriageError(
+                "The 'google-genai' package is required for Gemini triage. "
+                "Install it with: pip install -r requirements-triage.txt"
+            ) from exc
+
+        # genai.Client() picks up GEMINI_API_KEY from the environment on its own.
+        # (If GOOGLE_API_KEY is also set, the SDK prefers it -- so we read only
+        # GEMINI_API_KEY here, matching api_key_env and the build_provider check.)
+        client = genai.Client()
+        resp = client.models.generate_content(
+            model=self.model,
+            contents=user,
+            config=types.GenerateContentConfig(system_instruction=system),
+        )
+        # response.text concatenates the text parts; it can be None if the model
+        # returned no text (e.g. a safety block), so coerce to a string.
+        return resp.text or ""
+
+
 PROVIDERS: dict[str, type[LLMProvider]] = {
     AnthropicProvider.name: AnthropicProvider,
     OpenAIProvider.name: OpenAIProvider,
+    GeminiProvider.name: GeminiProvider,
 }
 
 

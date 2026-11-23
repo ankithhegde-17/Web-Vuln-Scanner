@@ -72,7 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
                              "<output>.triaged.json and .triaged.md. Skips gracefully if no API key is set. "
                              "The key is read only from the environment or a .env file.")
     triage.add_argument("--llm-provider", default="anthropic",
-                        help="LLM provider for --triage (default: anthropic; also: openai)")
+                        help="LLM provider for --triage (default: anthropic; also: openai, gemini)")
     triage.add_argument("--llm-model", default=None,
                         help="Model id for --triage (default: the provider's default, e.g. claude-sonnet-5-5)")
     p.add_argument("--ignore-robots", action="store_true",

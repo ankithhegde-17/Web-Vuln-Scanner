@@ -108,6 +108,13 @@ def test_bad_llm_reply_degrades_gracefully():
     assert {f["id"] for f in enriched["findings"]} == {"SQLI-1", "CSP-1"}
 
 
+def test_provider_api_error_becomes_triage_error():
+    # A vendor SDK failure (e.g. Gemini's 503 "high demand") must surface as a
+    # clean TriageError the runner can report -- not an unhandled traceback.
+    with pytest.raises(TriageError, match="API call failed"):
+        triage_report(sample_report(), FakeProvider(error=RuntimeError("503 UNAVAILABLE")))
+
+
 def test_markdown_renders_rerank_and_summary():
     enriched = triage_report(sample_report(), FakeProvider(reply=llm_reply()))
     md = build_markdown(enriched)
@@ -128,6 +135,24 @@ def test_build_provider_unknown_provider(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
     with pytest.raises(TriageError):
         build_provider("not-a-provider")
+
+
+def test_build_provider_gemini_missing_key_raises(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    with pytest.raises(MissingAPIKey) as exc:
+        build_provider("gemini")
+    assert exc.value.env_var == "GEMINI_API_KEY"
+
+
+def test_build_provider_gemini_with_key(monkeypatch):
+    # With the key present, build_provider returns a Gemini provider using the
+    # current stable Flash model by default -- and never imports the SDK or hits
+    # the network (that only happens inside complete()).
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    provider = build_provider("gemini")
+    assert provider.name == "gemini"
+    assert provider.model == "gemini-3.8-flash"
+    assert build_provider("gemini", model="gemini-3.6-flash").model == "gemini-3.6-flash"
 
 
 def test_run_triage_skips_without_key(tmp_path, monkeypatch, capsys):

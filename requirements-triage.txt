@@ -4,3 +4,4 @@
 
 anthropic>=0.40        # default provider (Claude)
 # openai>=1.0          # uncomment to use --llm-provider openai
+# google-genai<3.0.0   # uncomment to use --llm-provider gemini

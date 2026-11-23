@@ -21,7 +21,7 @@ import json
 import logging
 import re
 
-from scanner.triage.providers import LLMProvider
+from scanner.triage.providers import LLMProvider, TriageError
 
 log = logging.getLogger(__name__)
 
@@ -178,6 +178,14 @@ def triage_report(report: dict, provider: LLMProvider, retries: int = 1) -> dict
     for attempt in range(retries + 1):
         try:
             raw = provider.complete(system, user)
+        except TriageError:
+            raise  # already a clean, user-facing error (e.g. SDK not installed)
+        except Exception as exc:
+            # Vendor SDK errors (bad key, quota, 503 overloaded, network) come in
+            # many exception types. Normalise them to TriageError so the caller
+            # prints one clear message and keeps the scan, instead of a traceback.
+            raise TriageError(f"{provider.name} API call failed: {type(exc).__name__}: {exc}") from exc
+        try:
             parsed = _extract_json(raw)
             parsed["_provider"] = provider.name
             parsed["_model"] = provider.model
