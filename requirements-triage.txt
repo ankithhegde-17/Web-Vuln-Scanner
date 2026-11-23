@@ -1,0 +1,6 @@
+# Optional dependencies for Phase 3 LLM triage only.
+# The core scanner (crawler + passive/active checks) needs none of these.
+#   pip install -r requirements-triage.txt
+
+anthropic>=0.40        # default provider (Claude)
+# openai>=1.0          # uncomment to use --llm-provider openai

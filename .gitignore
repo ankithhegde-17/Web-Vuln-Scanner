@@ -11,6 +11,8 @@ env/
 # Secrets and local config (never commit these)
 .env
 .env.*
+# but DO commit the placeholder template (safe, no real keys)
+!.env.example
 *.local
 *.local.*
 config.local.*

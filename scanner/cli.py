@@ -64,6 +64,17 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Extra endpoints for the active checks: a path to a file (one URL per line, '#' "
                              "comments allowed) or a comma-separated list. Needed for JavaScript apps where the "
                              "crawler sees only one page. Seed URLs with query params, e.g. '/search?q=test'.")
+
+    triage = p.add_argument_group("LLM triage (Phase 3; opt-in, needs an API key)")
+    triage.add_argument("--triage", action="store_true",
+                        help="After scanning, send the findings to an LLM to re-rank by real-world severity, "
+                             "flag false positives/duplicates, and write plain-language fixes. Writes "
+                             "<output>.triaged.json and .triaged.md. Skips gracefully if no API key is set. "
+                             "The key is read only from the environment or a .env file.")
+    triage.add_argument("--llm-provider", default="anthropic",
+                        help="LLM provider for --triage (default: anthropic; also: openai)")
+    triage.add_argument("--llm-model", default=None,
+                        help="Model id for --triage (default: the provider's default, e.g. claude-sonnet-5-5)")
     p.add_argument("--ignore-robots", action="store_true",
                    help="Ignore robots.txt. Only appropriate for apps you own.")
     p.add_argument("--insecure", action="store_true",
@@ -179,4 +190,15 @@ def main(argv: list[str] | None = None) -> int:
 
     path = write_json_report(result, args.output)
     print_summary(result, report_path=str(path))
+
+    # Phase 3 (opt-in): LLM triage of the findings. Imported lazily so a plain
+    # scan never loads the triage code or its optional dependencies.
+    if args.triage:
+        from scanner.reporting.json_report import build_report
+        from scanner.triage.runner import run_triage
+        run_triage(
+            build_report(result), args.output,
+            provider_name=args.llm_provider, model=args.llm_model,
+        )
+
     return EXIT_OK

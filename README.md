@@ -4,12 +4,13 @@ A command-line web vulnerability scanner written in Python, built in phases as a
 
 - **Passive mode (default):** a same-domain crawler plus non-intrusive checks. Sends no attack payloads, never submits forms, only `GET`.
 - **Active mode (opt-in, `--active`):** adds reflected-XSS, safe SQL-injection, and open-redirect detection. All non-destructive detection probes — nothing that deletes, modifies, or submits real data. Gated behind **both** `--i-have-permission` and `--active`.
+- **LLM triage (opt-in, `--triage`):** sends the findings to a configurable LLM that re-ranks them by real-world severity, flags false positives and duplicates, and writes plain-language fixes. Needs an API key; skips gracefully without one.
 
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Crawler, form inventory, passive checks, JSON + terminal reports | ✅ done |
 | 2 | Active checks (reflected XSS, safe SQLi detection, open redirect) + seeded targets | ✅ done |
-| 3 | LLM triage layer that reads the JSON findings | planned |
+| 3 | LLM triage layer that enriches the JSON findings | ✅ done |
 
 ---
 
@@ -38,6 +39,12 @@ pip install -r requirements.txt
 ```
 
 Runtime dependencies are just `requests` and `beautifulsoup4`; `pytest` is only for the tests.
+
+LLM triage (Phase 3) is optional and has its own dependency file, so the core scanner stays light:
+
+```bash
+pip install -r requirements-triage.txt   # only if you want --triage (installs the anthropic SDK)
+```
 
 ## Spin up a safe target: OWASP Juice Shop (Docker)
 
@@ -123,10 +130,18 @@ Web-Vuln-Scanner/
 │   │   ├── xss.py           reflected XSS
 │   │   ├── sqli.py          SQL injection (error- and boolean-based)
 │   │   └── redirect.py      open redirect
+│   ├── triage/              LLM TRIAGE (Phase 3; opt-in, needs an API key)
+│   │   ├── providers.py     provider-agnostic LLM interface + .env key loading
+│   │   ├── engine.py        prompt, JSON parsing, merge + re-rank
+│   │   ├── report.py        enriched JSON + Markdown writers
+│   │   ├── runner.py        shared driver (used by --triage and the CLI below)
+│   │   └── __main__.py      `python -m scanner.triage <report.json>`
 │   └── reporting/
 │       ├── json_report.py   machine-readable report
 │       └── terminal.py      human-readable summary
 ├── targets/juice-shop.txt   seed endpoints for testing the active checks
+├── requirements-triage.txt  optional deps for triage only (anthropic SDK)
+├── .env.example             template for the triage API key (.env is gitignored)
 ├── tests/                   pytest suite with a local vulnerable test server
 └── examples/juice-shop-report.json   real output from a Juice Shop scan
 ```
@@ -231,6 +246,51 @@ Deliberately **not** done, because the brief forbids destructive/noisy payloads 
 ### 3. Open redirect (`active/redirect.py`)
 
 For redirect-style parameters (`redirect`, `url`, `next`, `return`, `dest`, `to`, …, or any parameter whose value already looks like a URL/path), it injects a **non-routable marker host** — `http://vuln-scanner-probe.invalid/`. `.invalid` is reserved by RFC 6761 and can never resolve to a real server, so even if a browser followed the redirect it would go nowhere. If the server tries to send the browser to that marker (via a `Location` header or an HTML meta-refresh), the parameter is an open redirect. **Reported MEDIUM.** The scanner never follows the redirect itself, and never uses a real external host as the marker.
+
+---
+
+## LLM triage (Phase 3, opt-in)
+
+Triage takes the JSON findings and asks a large language model to do three things: **re-rank** each finding by real-world severity (which often differs from the raw label), **reduce noise** by flagging likely false positives and duplicates, and write a **plain-language remediation note** (what the bug is, why it matters, an example fix). It's aimed at the part a scanner is worst at: judgement and prioritisation.
+
+It's strictly opt-in. A normal scan never loads or calls any of it.
+
+```bash
+# One: triage during a scan
+python -m scanner http://localhost:3000 --i-have-permission --active \
+    --urls targets/juice-shop.txt --triage
+
+# Two: triage a report you already saved (no re-scanning)
+python -m scanner.triage scan-results.json
+
+# Pick a model or provider
+python -m scanner.triage scan-results.json --llm-model claude-opus-5-5
+python -m scanner.triage scan-results.json --llm-provider openai --llm-model gpt-4o
+```
+
+Either way it writes `<report>.triaged.json` (the original findings plus a `triage` block on each, re-sorted by adjusted severity with flagged items at the end) and `<report>.triaged.md` (a readable summary).
+
+### API keys — environment / `.env` only
+
+The key is read **only** from an environment variable, or a local `.env` file that the tool loads into the environment (it never overwrites a real env var, and never prints key values). It is never passed on the command line or written to any output.
+
+```bash
+cp .env.example .env     # then edit .env and add your key
+# .env is gitignored and must never be committed; .env.example holds placeholders only
+```
+
+- `--llm-provider anthropic` (default) reads `ANTHROPIC_API_KEY`; default model `claude-sonnet-5-5`.
+- `--llm-provider openai` reads `OPENAI_API_KEY`.
+
+**No key set → triage skips gracefully:** it prints how to set one and exits cleanly (exit 0), the scan report is untouched, and **nothing is sent anywhere.** A malformed model reply is also handled: triage retries once, then returns the report unchanged with a note, rather than crashing or dropping findings.
+
+### Privacy note
+
+Triage necessarily sends the findings — including target URLs and evidence snippets — to whichever LLM provider you configure. That only happens when you invoke triage, which is why it's kept separate from scanning and off by default. For your own apps, use a provider you're comfortable sending that to.
+
+### Adding another provider
+
+Providers sit behind a one-method interface (`LLMProvider.complete(system, user) -> str`) in `scanner/triage/providers.py`. Claude (Anthropic SDK) and OpenAI are included; a new provider is a small subclass plus one line in the registry — the engine, prompt and reports don't change.
 
 ---
 
