@@ -5,7 +5,7 @@ same settings object instead of a long list of arguments. The CLI builds a
 ScanConfig from command-line flags; tests can build one directly.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from scanner import __version__
 
@@ -34,6 +34,13 @@ class ScanConfig:
 
     # --- Checks -------------------------------------------------------------
     probe_sensitive_paths: bool = True
+
+    # Active (intrusive) checks. OFF by default. They only run when the user
+    # passes BOTH --i-have-permission and --active, so the intrusive tests are
+    # behind a second, explicit opt-in.
+    active_checks: bool = False
+    # Extra endpoints to feed the active checks, from --urls. See scanner/targets.py.
+    seed_urls: list = field(default_factory=list)
 
     # Set to False only for your own apps that use self-signed certificates.
     verify_tls: bool = True

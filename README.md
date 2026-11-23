@@ -2,12 +2,13 @@
 
 A command-line web vulnerability scanner written in Python, built in phases as a learning / portfolio project.
 
-**Phase 1 (this version):** a same-domain crawler plus **passive** security checks. It never sends attack payloads, never submits forms, and only ever makes `GET` requests.
+- **Passive mode (default):** a same-domain crawler plus non-intrusive checks. Sends no attack payloads, never submits forms, only `GET`.
+- **Active mode (opt-in, `--active`):** adds reflected-XSS, safe SQL-injection, and open-redirect detection. All non-destructive detection probes — nothing that deletes, modifies, or submits real data. Gated behind **both** `--i-have-permission` and `--active`.
 
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Crawler, form inventory, passive checks, JSON + terminal reports | ✅ done |
-| 2 | Active checks (XSS, SQLi, ...) against the form inventory | planned |
+| 2 | Active checks (reflected XSS, safe SQLi detection, open redirect) + seeded targets | ✅ done |
 | 3 | LLM triage layer that reads the JSON findings | planned |
 
 ---
@@ -16,10 +17,10 @@ A command-line web vulnerability scanner written in Python, built in phases as a
 
 **Only scan systems you own or have explicit written permission to test.** Scanning other people's sites without permission can be a crime (for example under India's IT Act 2000, the US Computer Fraud and Abuse Act, or the UK Computer Misuse Act), even when the scan is "only passive".
 
-The tool enforces this:
+The tool enforces this with two gates:
 
-* It refuses to send **any** request unless you pass `--i-have-permission`, **or** you confirm interactively by typing the target's hostname.
-* When it isn't running in an interactive terminal (scripts, CI) and the flag is missing, it exits with code `2` without contacting the target.
+* **Permission gate (`--i-have-permission`).** It refuses to send **any** request unless you pass `--i-have-permission`, **or** you confirm interactively by typing the target's hostname. When it isn't running in an interactive terminal (scripts, CI) and the flag is missing, it exits with code `2` without contacting the target.
+* **Active-checks gate (`--active`).** The intrusive checks (XSS/SQLi/open-redirect, which send crafted input) are **off by default** and need a *second*, explicit opt-in. `--active` requires `--i-have-permission` as well; using `--active` alone is refused before any request is sent. Even then, every payload is a non-destructive detection probe.
 
 Good practice targets: **OWASP Juice Shop on your own machine** (instructions below) and **your own deployed apps**.
 
@@ -53,22 +54,29 @@ Binding to `127.0.0.1` keeps the vulnerable app reachable only from your own mac
 ## Usage
 
 ```bash
-# Basic scan of Juice Shop
+# Passive scan of Juice Shop (default: no payloads)
 python -m scanner http://localhost:3000 --i-have-permission
 
 # Or confirm interactively (you'll be asked to type "localhost")
 python -m scanner http://localhost:3000
 
+# ACTIVE scan: passive checks PLUS reflected XSS / SQLi / open redirect.
+# Needs both flags. Seed endpoints with --urls so the active checks have
+# parameters to test (essential for single-page apps like Juice Shop).
+python -m scanner http://localhost:3000 --i-have-permission --active --urls targets/juice-shop.txt
+
+# --urls also accepts a comma-separated list instead of a file
+python -m scanner http://localhost:3000 --i-have-permission --active --urls "http://localhost:3000/rest/products/search?q=test"
+
 # Gentler / bigger crawl, custom report path
 python -m scanner https://my-app.example.com --i-have-permission --delay 2 --max-pages 100 -o reports/my-app.json
-
-# Show every request as it is made
-python -m scanner http://localhost:3000 --i-have-permission -v
 ```
 
 | Option | Default | Meaning |
 |---|---|---|
 | `--i-have-permission` | off | Confirm authorization (otherwise interactive prompt, or refusal) |
+| `--active` | off | **Enable active checks (XSS, SQLi, open redirect). Intrusive — requires `--i-have-permission` too.** |
+| `--urls FILE_OR_LIST` | – | Seed endpoints for active checks: a file (one URL per line, `#` comments) or a comma-separated list. Seed with query params, e.g. `/search?q=test` |
 | `--delay SECONDS` | `1.0` | Minimum time between requests. A robots.txt `Crawl-delay` can raise it |
 | `--max-pages N` | `50` | Stop after N pages |
 | `--max-depth N` | `3` | How many links away from the start URL to go |
@@ -79,7 +87,7 @@ python -m scanner http://localhost:3000 --i-have-permission -v
 | `--insecure` | off | Skip TLS verification (your own self-signed apps) |
 | `-v, --verbose` | off | Log each request |
 
-Exit codes: `0` scan completed, `1` error, `2` not authorized.
+Exit codes: `0` scan completed, `1` error, `2` not authorized (includes `--active` without `--i-have-permission`).
 
 ### Run the tests
 
@@ -87,39 +95,47 @@ Exit codes: `0` scan completed, `1` error, `2` not authorized.
 python -m pytest -q
 ```
 
-The tests start a small, deliberately insecure web server on `127.0.0.1` inside the test process, so they never touch a real site. They also check the safety properties: no requests without permission, GET only, forms never submitted, cookie values never written to the report.
+The tests start a small, deliberately insecure web server on `127.0.0.1` inside the test process, so they never touch a real site. They cover both the passive and active checks (the server has endpoints that are vulnerable to reflected XSS, error-based SQLi and open redirect), and they check the safety properties: no requests without permission, `--active` refused without `--i-have-permission`, active checks silent by default, cookie values never written to the report, and the reflected-XSS check ignoring *encoded* reflections so it doesn't false-positive.
 
 ---
 
 ## Project structure
 
 ```
-webvuln-scanner/
+Web-Vuln-Scanner/
 ├── scanner/
 │   ├── __main__.py          `python -m scanner` entry point
-│   ├── cli.py               argument parsing and the authorization gate
+│   ├── cli.py               argument parsing + the two authorization gates
 │   ├── config.py            ScanConfig: every tunable setting in one place
-│   ├── core.py              wires crawler + checks + findings together
-│   ├── http_client.py       rate-limited, GET-only HTTP client (the only code that talks to the network)
+│   ├── core.py              wires crawler + passive checks + active phase + findings
+│   ├── http_client.py       rate-limited GET/POST client (the only code that talks to the network)
 │   ├── crawler.py           same-domain BFS crawler, robots.txt, form extraction
+│   ├── targets.py           builds injection points from forms + --urls seeds (scope-checked)
 │   ├── models.py            Finding / Form / Page dataclasses + de-duplication
-│   ├── checks/
+│   ├── checks/              PASSIVE checks (inspect responses, send no payloads)
 │   │   ├── base.py          ResponseCheck and SiteCheck interfaces
 │   │   ├── headers.py       security headers
 │   │   ├── cookies.py       cookie flags
 │   │   ├── disclosure.py    Server / X-Powered-By disclosure
 │   │   └── sensitive_paths.py  exposed files + robots.txt disclosure
+│   ├── active/              ACTIVE checks (opt-in; non-destructive probes)
+│   │   ├── base.py          InjectionPoint + the injector + ActiveCheck interface
+│   │   ├── xss.py           reflected XSS
+│   │   ├── sqli.py          SQL injection (error- and boolean-based)
+│   │   └── redirect.py      open redirect
 │   └── reporting/
 │       ├── json_report.py   machine-readable report
 │       └── terminal.py      human-readable summary
-├── tests/                   pytest suite with a local test server
+├── targets/juice-shop.txt   seed endpoints for testing the active checks
+├── tests/                   pytest suite with a local vulnerable test server
 └── examples/juice-shop-report.json   real output from a Juice Shop scan
 ```
 
 ### Design choices (and why)
 
 * **`requests` over `httpx`.** The scanner is deliberately rate-limited to about one request per second, so async concurrency (httpx's big advantage) wouldn't make it faster. `requests` is synchronous and easier to read and debug.
-* **One HTTP client for everything.** `RateLimitedClient` is the only object that sends requests. That makes rate limiting impossible to bypass, and because it only has a `get()` method, Phase 1 code *can't* POST a form even by mistake.
+* **One HTTP client for everything.** `RateLimitedClient` is the only object that sends requests, so rate limiting and scope can't be bypassed. It will only ever send `GET` or `POST` and *hard-refuses* any other method — there is no code path that can `PUT`/`DELETE`/`PATCH`, so the scanner physically cannot modify or delete server-side data.
+* **Active checks share that same client and the same injector.** Every active probe goes through `send_with()` in `scanner/active/base.py`, which swaps the payload into exactly one parameter and leaves the rest at their baseline values. So active checks inherit the rate limit and scope for free, and each test changes one variable at a time.
 * **Breadth-first crawl.** Visiting pages nearest the start URL first means the most-linked pages get covered before `--max-pages` runs out.
 * **Redirects followed manually.** Automatic redirect-following could take the scanner to another domain before we get a chance to check scope. The crawler reads the `Location` header and only follows it if it stays on the same host.
 * **Strict scope.** Same hostname and port only. `app.example.com` being yours doesn't make `mail.example.com` fair game, so subdomains are out of scope.
@@ -178,6 +194,40 @@ Why it matters: a version string lets an attacker go straight to a CVE database 
 
 ---
 
+## Active checks (opt-in, non-destructive)
+
+Active checks only run with **both** `--i-have-permission` and `--active`. They test *injection points* — a query-string parameter or a form field — discovered two ways:
+
+* **Crawler forms.** Every form the crawler found, one injection point per field.
+* **`--urls` seeds.** On JavaScript apps the crawler sees one page, so you hand it known endpoints. Each query parameter in a seeded URL becomes an injection point. Seeds and forms are both **scope-checked**: anything not on the authorized host/port is dropped.
+
+Every injection point is tested by swapping the payload into just that one parameter, keeping the others at their baseline values, and every active finding records the exact `payload` and the `evidence`.
+
+### 1. Reflected XSS (`active/xss.py`)
+
+Injects a unique, harmless marker containing the characters that matter for XSS — `< > " '` — e.g. `xssa1b2c3d4e5<>"'`. Then:
+
+* If that exact string comes back **unencoded** in an **HTML** response, the app copied input into the page without escaping it — a real reflected-XSS sink. **Reported HIGH.**
+* If it comes back **HTML-encoded** (`&lt;...&gt;`), the app is escaping correctly — **not reported.** This is the key to avoiding false positives: lots of sites reflect your input, but safely.
+* Reflections in non-HTML responses (e.g. a JSON API) aren't flagged, because the browser won't parse them as HTML.
+
+The payload carries no script, tag name or event handler a browser would act on — the unencoded reflection alone proves the flaw, so the probe stays benign.
+
+### 2. SQL injection — safe detection only (`active/sqli.py`)
+
+Two techniques, neither of which writes data:
+
+* **Error-based.** Send an unbalanced quote (`'"`). If the input is concatenated into SQL, the database throws a syntax error that often leaks into the response. Matched against known error signatures for MySQL, PostgreSQL, SQLite, MS SQL Server and Oracle — but only if the signature wasn't already on the clean baseline page. **Confirmed, HIGH.**
+* **Boolean-based (behavioural).** Send a true condition (`' AND '1'='1`) and a false one (`' AND '1'='2`). If the input reaches a `WHERE` clause, the true response matches the normal page while the false one differs. A consistent difference is reported **HIGH but `tentative`** (behavioural, so confirm by hand).
+
+Deliberately **not** done, because the brief forbids destructive/noisy payloads and they can harm a target: no `DROP`/`DELETE`/`UPDATE`/`INSERT`, no stacked queries (`; DROP ...`), and no time-based `SLEEP()` payloads (those deliberately load the DB). Detection only.
+
+### 3. Open redirect (`active/redirect.py`)
+
+For redirect-style parameters (`redirect`, `url`, `next`, `return`, `dest`, `to`, …, or any parameter whose value already looks like a URL/path), it injects a **non-routable marker host** — `http://vuln-scanner-probe.invalid/`. `.invalid` is reserved by RFC 6761 and can never resolve to a real server, so even if a browser followed the redirect it would go nowhere. If the server tries to send the browser to that marker (via a `Location` header or an HTML meta-refresh), the parameter is an open redirect. **Reported MEDIUM.** The scanner never follows the redirect itself, and never uses a real external host as the marker.
+
+---
+
 ## Output
 
 **Terminal:** a colour-coded summary (colour is turned off automatically when piped, or when `NO_COLOR` is set), sorted by severity, plus the list of forms that were found.
@@ -211,18 +261,34 @@ Why it matters: a version string lets an attacker go straight to a CVE database 
 }
 ```
 
-Every finding has `id`, `severity`, `url`, `description` and `remediation`, plus `rule_id`, `evidence` and `confidence`, which give the Phase 3 LLM layer the context it needs to triage.
+Every finding has `id`, `severity`, `url`, `description`, `remediation` and (for active findings) `payload`, plus `rule_id`, `evidence` and `confidence`, which give the Phase 3 LLM layer the context it needs to triage.
 
 ---
 
-## What to expect on Juice Shop (and known limitations)
+## Testing against Juice Shop
 
-A default scan of Juice Shop reports a missing **CSP**, a missing **Referrer-Policy**, the **robots.txt** entry for `/ftp`, and plain HTTP (INFO on localhost). It correctly does *not* flag X-Frame-Options or X-Content-Type-Options, which Juice Shop does set. With `--ignore-robots` (fine here, since it's your local copy) it also confirms the **directory listing on `/ftp/`**, one of Juice Shop's classic challenges.
+Run Juice Shop (see above), then an active scan with the included seed file:
 
-You'll notice it crawls only **one page**. That's expected: Juice Shop is an Angular single-page app. Its HTML has no `<a href>` links or `<form>` tags; everything is rendered by JavaScript in the browser. A classic HTML crawler can't see those routes. That's a real limitation of this kind of scanner, and a good Phase 2 topic. Options include parsing JavaScript bundles for route strings, reading `sitemap.xml`, or driving a headless browser (e.g. Playwright). On traditional server-rendered apps the crawler will find many pages and forms.
+```bash
+python -m scanner http://localhost:3000 --i-have-permission --active --urls targets/juice-shop.txt --delay 0.3 --no-path-probes
+```
 
-Other limitations to know about:
+**What fires (verified):**
 
+| Endpoint | Check | Result |
+|---|---|---|
+| `/rest/products/search?q=` | SQL injection (error-based) | **HIGH, confirmed.** The `'"` payload produces `SQLITE_ERROR: ... syntax error` in the response — Juice Shop builds the search query by string concatenation. This is its signature SQLi. |
+| `/` and crawled pages | passive checks | missing **CSP**, missing **Referrer-Policy**, `/ftp` in **robots.txt**, plain HTTP (INFO on localhost) |
+
+**What correctly does *not* fire, and why** (these matter as much — they show the scanner avoids false positives):
+
+* **Reflected XSS on search** — the search endpoint returns `application/json`, and Juice Shop's XSS challenges are **DOM-based** (the payload is rendered client-side by Angular, never reflected into server HTML). An HTTP-level scanner can't see DOM XSS. To watch the XSS check fire against a genuine server-side reflection, run the tests (`tests/test_active.py`) or point `--urls` at an app that echoes input into its HTML unencoded.
+* **Open redirect on `/redirect`** — Juice Shop allow-lists the redirect target, so the harmless marker host is rejected. The check is proven against the test server in `tests/test_active.py`.
+
+### Known limitations
+
+* **Single-page apps.** The crawler sees only **one page** of Juice Shop: it's an Angular app whose HTML has no `<a href>` links or `<form>` tags (JavaScript renders everything). That's why `--urls` exists — you seed the endpoints the crawler can't discover. Future options: parse JS bundles for routes, read `sitemap.xml`, or drive a headless browser (e.g. Playwright). On server-rendered apps the crawler finds many pages and forms on its own.
+* **HTTP-level only.** The scanner catches *server-reflected* XSS and *error/boolean* SQLi. DOM-based XSS and other purely client-side bugs are out of reach by design.
 * Passive checks find misconfigurations, not logic bugs. "No findings" does **not** mean a site is secure.
 * Only cookies set via `Set-Cookie` headers are seen; cookies set by JavaScript (`document.cookie`) are invisible to an HTTP-level scanner.
 * No authentication support yet, so pages behind a login aren't crawled.

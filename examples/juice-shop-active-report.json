@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "scanner": {
+    "name": "webvuln-scanner",
+    "version": "0.1.0",
+    "mode": "active+passive"
+  },
+  "target": "http://localhost:3000",
+  "started_at": "2026-11-23T07:27:05+00:00",
+  "finished_at": "2026-11-23T07:27:09+00:00",
+  "settings": {
+    "max_pages": 50,
+    "max_depth": 3,
+    "delay_seconds": 0.2,
+    "respect_robots": true,
+    "probe_sensitive_paths": false,
+    "active_checks": true,
+    "seed_urls": [
+      "http://localhost:3000/rest/products/search?q=apple",
+      "http://localhost:3000/rest/products/1/reviews?id=1",
+      "http://localhost:3000/redirect?to=https://github.com/juice-shop/juice-shop"
+    ]
+  },
+  "stats": {
+    "pages_crawled": 1,
+    "forms_found": 0,
+    "injection_points_tested": 3,
+    "requests_made": 22,
+    "findings_by_severity": {
+      "high": 1,
+      "medium": 1,
+      "low": 1,
+      "info": 2
+    }
+  },
+  "warnings": [],
+  "findings": [
+    {
+      "rule_id": "ACTIVE_SQLI_ERROR",
+      "check": "sql_injection",
+      "severity": "high",
+      "title": "SQL injection (error-based) via q",
+      "url": "http://localhost:3000/rest/products/search?q=%27%22",
+      "description": "Sending a quote in 'q' produced a SQLite database error in the response, which means the input is being placed into a SQL query unsafely. This can allow reading or altering database contents.",
+      "remediation": "Use parameterised queries / prepared statements (never build SQL by string concatenation), and don't return raw database errors to the client.",
+      "evidence": "SQLite error signature in response: SQLITE_ERROR",
+      "confidence": "confirmed",
+      "payload": "'\"",
+      "affected_urls": [
+        "http://localhost:3000/rest/products/search?q=%27%22"
+      ],
+      "id": "ACTIVE_SQLI_ERROR-ef25eb47"
+    },
+    {
+      "rule_id": "HEADER_CSP_MISSING",
+      "check": "security_headers",
+      "severity": "medium",
+      "title": "Content-Security-Policy header missing",
+      "url": "http://localhost:3000/",
+      "description": "Without a CSP the browser will run any script that ends up in the page, so a single XSS bug gives an attacker full control. CSP is the main defence-in-depth layer against XSS.",
+      "remediation": "Add a Content-Security-Policy, starting with something like \"default-src 'self'; object-src 'none'; frame-ancestors 'self'\" and tightening from there.",
+      "evidence": "",
+      "confidence": "confirmed",
+      "payload": "",
+      "affected_urls": [
+        "http://localhost:3000/"
+      ],
+      "id": "HEADER_CSP_MISSING-bc850d63"
+    },
+    {
+      "rule_id": "HEADER_REFERRER_POLICY_MISSING",
+      "check": "security_headers",
+      "severity": "low",
+      "title": "Referrer-Policy header missing",
+      "url": "http://localhost:3000/",
+      "description": "Without an explicit policy the full URL (which may contain tokens, IDs or search terms) can be sent to third-party sites in the Referer header. Modern browsers default to a safer policy, which is why this is LOW.",
+      "remediation": "Send \"Referrer-Policy: strict-origin-when-cross-origin\" (or no-referrer).",
+      "evidence": "",
+      "confidence": "confirmed",
+      "payload": "",
+      "affected_urls": [
+        "http://localhost:3000/"
+      ],
+      "id": "HEADER_REFERRER_POLICY_MISSING-4f039e10"
+    },
+    {
+      "rule_id": "ROBOTS_DISCLOSES_PATHS",
+      "check": "robots_disclosure",
+      "severity": "info",
+      "title": "robots.txt lists disallowed paths",
+      "url": "http://localhost:3000/robots.txt",
+      "description": "robots.txt only asks well-behaved crawlers to stay away; it does not protect anything. These paths are worth reviewing manually to make sure they require authentication.",
+      "remediation": "Never rely on robots.txt to hide sensitive content; protect it with access control.",
+      "evidence": "Disallow: /ftp",
+      "confidence": "confirmed",
+      "payload": "",
+      "affected_urls": [
+        "http://localhost:3000/robots.txt"
+      ],
+      "id": "ROBOTS_DISCLOSES_PATHS-77192942"
+    },
+    {
+      "rule_id": "TRANSPORT_PLAIN_HTTP",
+      "check": "security_headers",
+      "severity": "info",
+      "title": "Page served over plain HTTP",
+      "url": "http://localhost:3000/",
+      "description": "Traffic is unencrypted, so anyone on the network path can read or modify it. HSTS cannot be applied to plain-HTTP responses.",
+      "remediation": "Serve the site only over HTTPS and redirect HTTP to HTTPS.",
+      "evidence": "",
+      "confidence": "confirmed",
+      "payload": "",
+      "affected_urls": [
+        "http://localhost:3000/"
+      ],
+      "id": "TRANSPORT_PLAIN_HTTP-d45085d6"
+    }
+  ],
+  "pages": [
+    {
+      "url": "http://localhost:3000/",
+      "status_code": 200,
+      "depth": 0,
+      "content_type": "text/html; charset=UTF-8"
+    }
+  ],
+  "forms": []
+}

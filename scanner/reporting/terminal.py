@@ -42,8 +42,11 @@ def print_summary(result: ScanResult, report_path: str | None = None, stream: Te
     out(c("=" * 70, BOLD))
     out(c(f" Scan summary for {result.config.start_url}", BOLD))
     out(c("=" * 70, BOLD))
+    out(f" Mode          : {'active + passive' if result.config.active_checks else 'passive only'}")
     out(f" Pages crawled : {len(result.crawl.pages)}")
     out(f" Forms found   : {len(result.crawl.forms)}")
+    if result.config.active_checks:
+        out(f" Points tested : {result.injection_points_tested}  (injection points probed by active checks)")
     out(f" Requests made : {result.request_count}")
 
     counts = Counter(f.severity for f in result.findings)
@@ -59,9 +62,16 @@ def print_summary(result: ScanResult, report_path: str | None = None, stream: Te
         out(f" {tag} {f.title}{tentative}")
         extra = len(f.affected_urls) - 1
         out(f"          url: {f.url}" + (f"  (+{extra} more)" if extra > 0 else ""))
+        if f.payload:
+            out(f"          payload: {f.payload}")
         if f.evidence:
             out(f"          evidence: {f.evidence}")
         out(f"          fix: {f.remediation}")
+        out()
+
+    if result.errors:
+        for warning in result.errors:
+            out(c(f" ! {warning}", COLORS[Severity.MEDIUM]))
         out()
 
     if result.crawl.forms:

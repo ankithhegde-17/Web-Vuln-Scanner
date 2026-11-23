@@ -54,6 +54,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-o", "--output", default="scan-results.json", help="Path for the JSON report")
     p.add_argument("--no-path-probes", action="store_true",
                    help="Skip the sensitive-path probes (/.git/, /.env, ...); crawl and inspect responses only")
+
+    active = p.add_argument_group("active checks (intrusive; opt-in)")
+    active.add_argument("--active", action="store_true",
+                        help="Enable active checks: reflected XSS, safe SQL-injection detection, and open "
+                             "redirect. Intrusive, so this is a SECOND opt-in and REQUIRES --i-have-permission "
+                             "as well. Off by default (passive-only).")
+    active.add_argument("--urls", metavar="FILE_OR_LIST",
+                        help="Extra endpoints for the active checks: a path to a file (one URL per line, '#' "
+                             "comments allowed) or a comma-separated list. Needed for JavaScript apps where the "
+                             "crawler sees only one page. Seed URLs with query params, e.g. '/search?q=test'.")
     p.add_argument("--ignore-robots", action="store_true",
                    help="Ignore robots.txt. Only appropriate for apps you own.")
     p.add_argument("--insecure", action="store_true",
@@ -113,9 +123,26 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return EXIT_ERROR
 
+    # Active checks require a SECOND explicit opt-in. --active alone is not
+    # enough; the user must also assert authorization with --i-have-permission.
+    # We refuse the combination early, before contacting the target at all.
+    if args.active and not args.i_have_permission:
+        print("error: --active requires --i-have-permission as well. Active checks are intrusive, so they "
+              "need both the authorization flag and the explicit --active opt-in.", file=sys.stderr)
+        return EXIT_NOT_AUTHORIZED
+
     # >>> Safety gate: nothing below this line runs without authorization. <<<
     if not confirm_authorization(args.url, args.i_have_permission):
         return EXIT_NOT_AUTHORIZED
+
+    # Parse the --urls seed list (a file path or a comma-separated list).
+    seed_urls = []
+    if args.urls:
+        from scanner.targets import parse_seed_urls
+        seed_urls = parse_seed_urls(args.urls)
+        if not args.active:
+            print("note: --urls was given but --active was not, so the seeded endpoints won't be tested.",
+                  file=sys.stderr)
 
     # Imported here so that `--help` and the permission check stay fast and
     # don't depend on the scanning modules.
@@ -131,12 +158,16 @@ def main(argv: list[str] | None = None) -> int:
         respect_robots=not args.ignore_robots,
         probe_sensitive_paths=not args.no_path_probes,
         verify_tls=not args.insecure,
+        active_checks=args.active,
+        seed_urls=seed_urls,
     )
     if args.insecure:
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-    print(f"Scanning {config.start_url} (delay {config.delay}s, max {config.max_pages} pages)...", file=sys.stderr)
+    mode = "active + passive" if config.active_checks else "passive only"
+    print(f"Scanning {config.start_url} ({mode}, delay {config.delay}s, max {config.max_pages} pages)...",
+          file=sys.stderr)
     try:
         result = run_scan(config)
     except KeyboardInterrupt:

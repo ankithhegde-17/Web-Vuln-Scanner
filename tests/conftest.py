@@ -11,8 +11,10 @@ It lets us test the scanner end-to-end without touching any real site:
 
 from __future__ import annotations
 
+import html
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -82,12 +84,45 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/.git/HEAD":
             return self._send(200, b"ref: refs/heads/main\n", "text/plain")
+
+        # ---- Deliberately vulnerable endpoints, for the active-check tests ---
+        query = parse_qs(urlsplit(self.path).query)
+
+        if path == "/search":
+            # Reflects 'q' into HTML WITHOUT encoding -> reflected XSS.
+            q = query.get("q", [""])[0]
+            return self._send(200, f"<html><body>Results for {q}</body></html>".encode())
+
+        if path == "/safe-search":
+            # Reflects 'q' but HTML-escaped -> must NOT be flagged.
+            q = query.get("q", [""])[0]
+            return self._send(200, f"<html><body>Results for {html.escape(q)}</body></html>".encode())
+
+        if path == "/product":
+            # Error-based SQLi: an unbalanced quote yields a SQLite error.
+            pid = query.get("id", [""])[0]
+            if "'" in pid or '"' in pid:
+                return self._send(500, b"<html><body>SQLITE_ERROR: unrecognized token: near syntax</body></html>")
+            return self._send(200, f"<html><body>Product {html.escape(pid)}</body></html>".encode())
+
+        if path == "/go":
+            # Open redirect: blindly redirects to whatever 'to' says.
+            to = query.get("to", [""])[0]
+            self.send_response(302)
+            self.send_header("Location", to)
+            self.end_headers()
+            return
+
         # SPA-style catch-all: everything else returns the index page.
         return self._send(200, INDEX)
 
     def do_POST(self):
         Handler.requests_seen.append(("POST", self.path))
-        self._send(200, b"posted")
+        # Reflects the 'comment' field unencoded -> reflected XSS via POST form.
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length).decode() if length else ""
+        comment = parse_qs(body).get("comment", [""])[0]
+        self._send(200, f"<html><body>You said: {comment}</body></html>".encode())
 
 
 @pytest.fixture()

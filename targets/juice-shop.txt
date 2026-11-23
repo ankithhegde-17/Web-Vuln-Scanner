@@ -1,0 +1,46 @@
+# OWASP Juice Shop — target endpoints for the active checks.
+#
+# Use ONLY against your own local Juice Shop container (see the README).
+# Run Juice Shop, then:
+#
+#   python -m scanner http://localhost:3000 --i-have-permission --active \
+#       --urls targets/juice-shop.txt --delay 0.3 --no-path-probes
+#
+# Each line seeds an endpoint with a sample query parameter so the scanner has
+# something to inject into. The ?param=value is a benign placeholder; the
+# scanner swaps the value for its detection payloads, one parameter at a time.
+#
+# ----------------------------------------------------------------------------
+# What actually fires on Juice Shop, and why (verified 2026-11-23):
+#
+#  * SQL injection (error-based) on the product search 'q' -> FIRES (HIGH).
+#    Juice Shop builds the search SQL by string concatenation, so the payload
+#    '" produces a SQLite syntax error that leaks into the response. This is
+#    Juice Shop's signature SQLi and the clearest demo of the SQLi check.
+#
+#  * Reflected XSS -> does NOT fire here, and that's correct. The search
+#    endpoint returns JSON (Content-Type: application/json), and Juice Shop's
+#    XSS challenges are DOM-based (the payload is rendered by Angular in the
+#    browser, not reflected into server HTML). An HTTP-level scanner can't see
+#    client-side DOM XSS -- same root cause as the single-page-app crawling
+#    limit. To see the reflected-XSS check fire against a genuine server-side
+#    reflection, run the test suite (tests/test_active.py) or point --urls at
+#    an app that echoes input into its HTML unencoded.
+#
+#  * Open redirect -> does NOT fire here, also correct. Juice Shop's /redirect
+#    uses an allow-list (it only redirects to URLs containing a known-good
+#    substring), so our harmless marker host is rejected. The check is proven
+#    against the test server in tests/test_active.py.
+# ----------------------------------------------------------------------------
+
+# Product search — error-based SQL injection on 'q'. (HIGH, confirmed)
+http://localhost:3000/rest/products/search?q=apple
+
+# Product reviews — a numeric 'id' parameter, useful for exercising the
+# error-based and boolean SQLi probes on a second endpoint.
+http://localhost:3000/rest/products/1/reviews?id=1
+
+# Legacy redirect endpoint — Juice Shop's open-redirect challenge. Included so
+# you can see the check run; it won't flag, because Juice Shop allow-lists the
+# redirect target (a true positive needs the allow-listed host embedded).
+http://localhost:3000/redirect?to=https://github.com/juice-shop/juice-shop

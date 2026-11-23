@@ -23,7 +23,11 @@ def build_report(result: ScanResult) -> dict:
     counts = Counter(f.severity.value for f in result.findings)
     return {
         "schema_version": SCHEMA_VERSION,
-        "scanner": {"name": "webvuln-scanner", "version": __version__, "mode": "passive"},
+        "scanner": {
+            "name": "webvuln-scanner",
+            "version": __version__,
+            "mode": "active+passive" if result.config.active_checks else "passive",
+        },
         "target": result.config.start_url,
         "started_at": result.started_at,
         "finished_at": result.finished_at,
@@ -33,13 +37,17 @@ def build_report(result: ScanResult) -> dict:
             "delay_seconds": result.config.delay,
             "respect_robots": result.config.respect_robots,
             "probe_sensitive_paths": result.config.probe_sensitive_paths,
+            "active_checks": result.config.active_checks,
+            "seed_urls": list(result.config.seed_urls),
         },
         "stats": {
             "pages_crawled": len(result.crawl.pages),
             "forms_found": len(result.crawl.forms),
+            "injection_points_tested": result.injection_points_tested,
             "requests_made": result.request_count,
             "findings_by_severity": {s.value: counts.get(s.value, 0) for s in reversed(Severity)},
         },
+        "warnings": list(result.errors),
         "findings": [f.to_dict() for f in result.findings],
         "pages": [p.to_dict() for p in result.crawl.pages],
         "forms": [f.to_dict() for f in result.crawl.forms],

@@ -58,6 +58,10 @@ class Finding:
     remediation: str
     evidence: str = ""
     confidence: str = "confirmed"
+    # The exact payload that triggered an active finding. Empty for passive
+    # findings (which send no payloads). Recorded so a human can reproduce
+    # the result by hand.
+    payload: str = ""
     # Extra key used for de-duplication, e.g. the cookie name for cookie
     # findings, so two different insecure cookies are two separate findings.
     dedup_key: str = ""
