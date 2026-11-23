@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets and local config (never commit these)
+.env
+.env.*
+*.local
+*.local.*
+config.local.*
+secrets.*
+
+# Scan output (may contain details about real targets)
+scan-results*.json
+reports/
+*.report.json
+# Personal target lists for your own live apps
+targets.local.txt
+*.targets.txt
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

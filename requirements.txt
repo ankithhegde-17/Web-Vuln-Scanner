@@ -1,0 +1,6 @@
+# Runtime dependencies (kept deliberately small)
+requests>=2.31,<3        # HTTP client
+beautifulsoup4>=4.12,<5  # HTML parsing for links and forms
+
+# Development / testing only
+pytest>=7.4
